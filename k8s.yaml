@@ -80,6 +80,11 @@ spec:
           env:
             - name: ASR_MODEL
               value: /models/granite5-NC-Q8_0.gguf
+              # The "-nc" checkpoint is CC-BY-NC-SA-4.0: slightly more accurate
+              # but NON-COMMERCIAL. It is the default here because this
+              # deployment is personal. For anything commercial, change the
+              # mounted model to granite-speech-5.0-470m-turboctc-Q8_0.gguf
+              # (Apache-2.0) — same service, same flags, ~0.15 WER higher.
             - name: ASR_BACKEND
               value: vulkan
             - name: ASR_THREADS

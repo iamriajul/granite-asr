@@ -161,10 +161,16 @@ curl -s localhost:8080/v1/audio/transcriptions \
 | `granite-speech-5.0-470m-turboctc` | Apache-2.0 | 5.00% |
 | `granite-speech-5.0-470m-turboctc-nc` | CC-BY-NC-SA-4.0 | 4.85% |
 
-The `-nc` variant is slightly more accurate but **not licensed for commercial
-use**. Use the Apache-2.0 checkpoint if this is for a product.
+Both checkpoints are functionally identical here — same service, same flags,
+same GPU path. Pick purely on licensing:
 
-GGUF quants: [handy-computer/granite-speech-5.0-470m-turboctc-gguf](https://huggingface.co/handy-computer/granite-speech-5.0-470m-turboctc-gguf).
+- **`-nc`** (CC-BY-NC-SA-4.0) — non-commercial only, ~0.15 WER better.
+- **standard** (Apache-2.0) — unrestricted, use this for anything commercial.
+
+The example config and `k8s.yaml` default to `-nc` because this deployment is
+personal. Switching is just a different `ASR_MODEL` path — no rebuild.
+
+GGUF quants: [handy-computer/granite-speech-5.0-470m-turboctc-gguf](https://huggingface.co/handy-computer/granite-speech-5.0-470m-turboctc-gguf) · […-nc-gguf](https://huggingface.co/handy-computer/granite-speech-5.0-470m-turboctc-nc-gguf)
 
 ## License
 
