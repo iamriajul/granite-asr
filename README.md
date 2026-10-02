@@ -65,6 +65,42 @@ One extension:
 With `response_format=verbose_json` you always receive `raw_text` alongside the
 final `text`, so it is always clear what the polish stage changed.
 
+
+## Container image
+
+Published to `ghcr.io/iamriajul/granite-asr` on every push to `main`:
+
+```bash
+docker pull ghcr.io/iamriajul/granite-asr:main
+```
+
+The image contains the static service binary, `transcribe-cli` built with
+`TRANSCRIBE_VULKAN=ON`, ffmpeg, and the Vulkan/Mesa user-space stack. The model
+is **not** baked in — mount it from a volume.
+
+Tags: `:main`, `:latest` (default branch), `:sha-<short>`, `:vX.Y.Z` for
+releases.
+
+## Deploying
+
+```bash
+kubectl apply -f k8s.yaml
+```
+
+Two host-specific details in that manifest are worth calling out, because both
+fail *silently* rather than erroring:
+
+- **GIDs.** The pod adds `render` (992) and `video` (44) as supplemental
+  groups. Host-path device mounts do not carry host group ownership into the
+  container, so without these RADV gets `EPERM` and falls back to llvmpipe —
+  the service stays up and answers requests, just on the CPU. Check yours with
+  `getent group render video`.
+- **`RADV_PERFTEST=nogttspill`.** Without it Mesa intermittently spills VRAM
+  into GTT on Polaris, leaving memory clocks low and destroying throughput.
+
+Only one replica: the GPU is a single shared resource and the model is resident
+in VRAM, so replicas would contend for it.
+
 ## Configuration
 
 | Variable | Default | Purpose |
