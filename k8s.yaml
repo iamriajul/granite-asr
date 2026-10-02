@@ -1,0 +1,186 @@
+# Kubernetes deployment for granite-asr.
+#
+# GPU notes: there is no NVIDIA device plugin for Vulkan/RADV, so /dev/dri is
+# mounted directly from the host and the pod needs privileged security context
+# (the cgroup v2 devices controller denies /dev/dri/* otherwise). The
+# supplementalGroups are also required because host-path device mounts do not
+# carry host group ownership into the container.
+#
+# The image is expected to contain:
+#   - granite-asr        (this repo's static binary at /usr/local/bin/granite-asr)
+#   - transcribe-cli     (from transcribe.cpp, built with -DTRANSCRIBE_VULKAN=ON)
+#   - ffmpeg, mesa-vulkan-drivers, libvulkan1
+# The model lives on the PVC, not in the image.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: granite-asr
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: granite-models
+  namespace: granite-asr
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: microk8s-hostpath
+  resources:
+    requests:
+      storage: 4Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: granite-asr
+  namespace: granite-asr
+  labels:
+    app.kubernetes.io/name: granite-asr
+spec:
+  # One replica: the GPU is a single shared resource and transcribe.cpp holds
+  # one model resident. Multiple replicas would contend for VRAM.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: granite-asr
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: granite-asr
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: riajul-it
+      securityContext:
+        # /dev/dri/renderD128 is root:render (GID 992) and card0 is root:video
+        # (GID 44) on Ubuntu 24.04. Host-path device mounts do not carry host
+        # group ownership into the container, so these must be set explicitly or
+        # RADV gets EPERM and silently falls back to llvmpipe (CPU).
+        # Adjust these GIDs for your host: `getent group render video`.
+        supplementalGroups:
+          - 992 # render
+          - 44 # video
+      containers:
+        - name: granite-asr
+          # Replace with your published image; see README for what it must contain.
+          image: ghcr.io/riajul/granite-asr:latest
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            runAsUser: 0
+            # cgroup v2 devices controller denies /dev/dri/* even with the
+            # render/video groups applied, so the device allow-list must be
+            # relaxed for this pod.
+            privileged: true
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: ASR_MODEL
+              value: /models/granite5-NC-Q8_0.gguf
+            - name: ASR_BACKEND
+              value: vulkan
+            - name: ASR_THREADS
+              value: "4"
+            - name: ASR_BINARY
+              value: /usr/local/bin/transcribe-cli
+            - name: RADV_PERFTEST
+              # Stops Mesa randomly spilling VRAM into GTT on Polaris, which
+              # leaves memory clocks low and destroys throughput.
+              value: nogttspill
+            - name: PORT
+              value: "8080"
+            # Polish stage stays off until explicitly enabled. To turn it on:
+            # - name: ASR_LLM_BASE_URL
+            #   value: https://your-llm.example/v1
+            # - name: ASR_LLM_MODEL
+            #   value: your-small-instruct-model
+          volumeMounts:
+            - name: models
+              mountPath: /models
+            - name: dri
+              mountPath: /dev/dri
+          resources:
+            # Measured: ~70m CPU while serving, because transcription runs on
+            # the GPU and the binary is a thin shim around a CLI call. The
+            # model lives in VRAM, not RAM. Keep requests near observed use.
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "4"
+              memory: 2Gi
+          # transcribe-cli loads weights per request (~0.7s), so the listener
+          # is up long before the first transcript. Probe /health for liveness
+          # and let client timeouts bound transcription.
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            failureThreshold: 30
+            periodSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 15
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 30
+            failureThreshold: 5
+      volumes:
+        - name: models
+          persistentVolumeClaim:
+            claimName: granite-models
+        - name: dri
+          hostPath:
+            path: /dev/dri
+            type: Directory
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: granite-asr
+  namespace: granite-asr
+  labels:
+    app.kubernetes.io/name: granite-asr
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: granite-asr
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: granite-asr
+  namespace: granite-asr
+  annotations:
+    cert-manager.io/cluster-issuer: cert-manager-global
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+  labels:
+    app.kubernetes.io/name: granite-asr
+spec:
+  ingressClassName: public
+  rules:
+    - host: asr.riajul.dev
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: granite-asr
+                port:
+                  name: http
+  tls:
+    - hosts:
+        - asr.riajul.dev
+      secretName: granite-asr-tls
