@@ -63,9 +63,11 @@ spec:
           - 44 # video
       containers:
         - name: granite-asr
-          # Replace with your published image; see README for what it must contain.
-          image: ghcr.io/riajul/granite-asr:latest
-          imagePullPolicy: IfNotPresent
+          # Published by .github/workflows/container.yml on every push to main.
+          image: ghcr.io/iamriajul/granite-asr:main
+          # :main is a moving tag, so always resolve it rather than trusting a
+          # cached copy under the same digest.
+          imagePullPolicy: Always
           securityContext:
             runAsUser: 0
             # cgroup v2 devices controller denies /dev/dri/* even with the

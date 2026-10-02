@@ -43,10 +43,13 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          # type=ref,event=branch yields the branch name, so pushes to main
+          # publish :main; type=sha gives an immutable per-commit tag; the raw
+          # latest tag follows the default branch.
           tags: |
-            type=raw,value=main,enable={{is_default_branch}}
-            type=raw,value={{sha}}
+            type=ref,event=branch
             type=ref,event=tag
+            type=sha,format=short
             type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Set up Buildx
