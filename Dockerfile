@@ -1,5 +1,14 @@
-# Build stage: transcribe.cpp with the Vulkan backend.
-#
+# Multi-stage image: the Go service, transcribe.cpp with the Vulkan backend,
+# and a slim runtime. The model GGUF is mounted, never baked in.
+
+# Service stage: compile the static Go binary.
+FROM golang:1.24-alpine AS service
+
+WORKDIR /src
+COPY go.mod ./
+COPY main.go ./
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/granite-asr .
+
 # The Vulkan kernel build is slow (a few minutes) because shaderc compiles a
 # large number of compute shaders, so it happens here rather than at runtime.
 FROM ubuntu:24.04 AS transcribe
@@ -30,7 +39,7 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=transcribe /src/build/bin/transcribe-cli /usr/local/bin/transcribe-cli
-COPY granite-asr /usr/local/bin/granite-asr
+COPY --from=service /out/granite-asr /usr/local/bin/granite-asr
 
 # The model GGUF is mounted from a volume; it is never baked into the image.
 ENV ASR_BINARY=/usr/local/bin/transcribe-cli \
